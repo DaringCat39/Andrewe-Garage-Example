@@ -1,17 +1,30 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { services, site } from "@/lib/content";
+import type { EnquiryApiResponse } from "@/lib/enquiries/types";
 
 type FormStatus = "idle" | "loading" | "success" | "error";
+
+class EnquirySubmissionError extends Error {}
 
 export function ContactForm() {
   const [status, setStatus] = useState<FormStatus>("idle");
   const [message, setMessage] = useState("");
+  const startedAt = useRef(0);
+  const submissionId = useRef("");
+  const submissionInProgress = useRef(false);
+
+  useEffect(() => {
+    startedAt.current = Date.now();
+    submissionId.current = window.crypto.randomUUID();
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
+
+    if (submissionInProgress.current) return;
 
     if (!form.checkValidity()) {
       form.reportValidity();
@@ -20,42 +33,69 @@ export function ContactForm() {
       return;
     }
 
+    submissionInProgress.current = true;
     setStatus("loading");
     setMessage("");
 
     try {
       const data = new FormData(form);
-      const name = String(data.get("name") ?? "");
-      const phone = String(data.get("phone") ?? "");
-      const email = String(data.get("email") ?? "");
-      const service = String(data.get("service") ?? "");
-      const enquiry = String(data.get("message") ?? "");
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      const currentSubmissionId =
+        submissionId.current || window.crypto.randomUUID();
 
-      const subject = encodeURIComponent(
-        `Website enquiry from ${name} · ${service}`,
-      );
-      const body = encodeURIComponent(
-        [
-          `Name: ${name}`,
-          `Telephone: ${phone || "Not supplied"}`,
-          `Email: ${email}`,
-          `Service: ${service}`,
-          "",
-          enquiry,
-        ].join("\n"),
-      );
+      let response: Response;
+      try {
+        response = await fetch("/api/enquiries", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            submissionId: currentSubmissionId,
+            name: String(data.get("name") ?? ""),
+            phone: String(data.get("phone") ?? ""),
+            email: String(data.get("email") ?? ""),
+            service: String(data.get("service") ?? ""),
+            message: String(data.get("message") ?? ""),
+            website: String(data.get("website") ?? ""),
+            startedAt: startedAt.current || Date.now() - 1_500,
+          }),
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
 
-      await new Promise((resolve) => window.setTimeout(resolve, 350));
-      window.location.assign(`${site.emailHref}?subject=${subject}&body=${body}`);
+      let result: EnquiryApiResponse | undefined;
+      try {
+        result = (await response.json()) as EnquiryApiResponse;
+      } catch {
+        // Hosting and proxy failures can return HTML. Keep that detail private.
+      }
+
+      if (!response.ok || !result?.success) {
+        throw new EnquirySubmissionError(
+          result?.message ||
+            `We could not send your enquiry just now. Please try again or call ${site.phone}.`,
+        );
+      }
+
+      form.reset();
+      submissionId.current = window.crypto.randomUUID();
+      startedAt.current = Date.now();
       setStatus("success");
-      setMessage(
-        "Your email app should now be open with the enquiry ready to send.",
-      );
-    } catch {
+      setMessage(result.message);
+    } catch (error) {
       setStatus("error");
       setMessage(
-        `We could not open your email app. Please call ${site.phone} instead.`,
+        error instanceof EnquirySubmissionError
+          ? error.message
+          : error instanceof Error && error.name === "AbortError"
+            ? `The enquiry took too long to send. Please try again or call ${site.phone}.`
+            : `We could not send your enquiry just now. Please try again or call ${site.phone}.`,
       );
+    } finally {
+      submissionInProgress.current = false;
     }
   };
 
@@ -66,6 +106,7 @@ export function ContactForm() {
     <form
       onSubmit={handleSubmit}
       noValidate
+      aria-busy={status === "loading"}
       className="rounded-[1.5rem] bg-dark p-7 text-white shadow-2xl shadow-dark/20 sm:p-10 lg:p-12"
       aria-label="Contact Andrew's Garage"
     >
@@ -77,12 +118,25 @@ export function ContactForm() {
           Tell us what your vehicle needs.
         </h3>
         <p className="mt-3 text-sm leading-relaxed text-dark-muted">
-          We will open a prepared email in your mail app, ready for you to
-          review and send.
+          Send the details securely and the workshop will reply as soon as it
+          can during opening hours.
         </p>
       </div>
 
       <div className="grid gap-5">
+        <div className="absolute left-[-9999px]" aria-hidden="true">
+          <label htmlFor="website">
+            Website
+            <input
+              id="website"
+              name="website"
+              type="text"
+              tabIndex={-1}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+
         <div className="grid gap-5 sm:grid-cols-2">
           <label className="text-sm font-medium" htmlFor="name">
             Name
@@ -92,6 +146,7 @@ export function ContactForm() {
               name="name"
               type="text"
               autoComplete="name"
+              maxLength={80}
               required
             />
           </label>
@@ -104,6 +159,7 @@ export function ContactForm() {
               type="tel"
               autoComplete="tel"
               inputMode="tel"
+              maxLength={30}
             />
           </label>
         </div>
@@ -116,6 +172,7 @@ export function ContactForm() {
             name="email"
             type="email"
             autoComplete="email"
+            maxLength={254}
             required
           />
         </label>
@@ -147,6 +204,7 @@ export function ContactForm() {
             className={`${inputClasses} min-h-32 resize-y`}
             id="message"
             name="message"
+            maxLength={3000}
             required
           />
         </label>
@@ -162,7 +220,7 @@ export function ContactForm() {
                 className="h-4 w-4 animate-spin rounded-full border-2 border-dark/25 border-t-dark"
                 aria-hidden="true"
               />
-              Preparing email…
+              Sending enquiry…
             </>
           ) : (
             <>
@@ -179,6 +237,11 @@ export function ContactForm() {
           aria-live="polite"
         >
           {message}
+        </p>
+
+        <p className="text-xs leading-relaxed text-white/45">
+          Your details are used only to respond to this enquiry and are not
+          added to a marketing list.
         </p>
       </div>
     </form>

@@ -78,6 +78,28 @@ summary::-webkit-details-marker {
   transform: translate3d(0, var(--hero-copy-shift), 0);
 }
 
+.services-scroll-section.is-enhanced .services-sticky {
+  position: sticky;
+  top: 6.1rem;
+}
+
+.services-scroll-section.is-enhanced .services-carousel-viewport {
+  overflow-x: hidden;
+}
+
+.services-carousel-track {
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+
+.services-carousel-viewport {
+  scrollbar-width: none;
+}
+
+.services-carousel-viewport::-webkit-scrollbar {
+  display: none;
+}
+
 .motion-ready [data-reveal] {
   opacity: 0;
   transform: translate3d(0, 28px, 0);
@@ -180,8 +202,23 @@ details[open] .faq-answer {
 
   .hero-media,
   .hero-copy,
+  .services-carousel-track,
   [data-reveal] {
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  .services-scroll-section,
+  .services-scroll-section.is-enhanced {
+    height: auto !important;
+  }
+
+  .services-scroll-section.is-enhanced .services-sticky {
+    position: relative;
+    top: auto;
+  }
+
+  .services-scroll-section.is-enhanced .services-carousel-viewport {
+    overflow-x: auto;
   }
 }
